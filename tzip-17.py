@@ -27,6 +27,9 @@ class TZIP17(sp.Contract):
         defaultExp = self.data.user_store[permit.address].expiry
         return self.data.permit_expires.get(permit, defaultExp)
 
+    def getAddressFromPubKey(self, pubKey):
+        return sp.to_address(sp.implicit_account(sp.hash_key(pubKey)))
+
     @sp.entry_point
     def toggleContractState(self, params):
         self.onlyByAdmin()
@@ -34,7 +37,7 @@ class TZIP17(sp.Contract):
 
     @sp.entry_point
     def permit(self, params):
-        address = sp.to_address(sp.implicit_account(sp.hash_key(params.key)))
+        address = self.getAddressFromPubKey(params.key)
 
         self.initUserDefault(address)
 
@@ -55,16 +58,19 @@ class TZIP17(sp.Contract):
         self.data.user_store[address].counter += 1
 
     @sp.entry_point
-    def setExpiry(self, params):
+    def setUserExpiry(self, params):
         self.initUserDefault(sp.sender)
         sp.if params.seconds < 0:
             params.seconds = 0
-        sp.if params.bytes.is_some():
-            paramHash = params.bytes.open_some()
-            rec = sp.record(address=sp.sender, paramHash=paramHash)
-            self.data.permit_expires[rec] = params.seconds
-        sp.else:
-            self.data.user_store[sp.sender].expiry = params.seconds
+        self.data.user_store[sp.sender].expiry = params.seconds
+
+    @sp.entry_point
+    def setPermitExpiry(self, params):
+        self.initUserDefault(sp.sender)
+        sp.if params.seconds < 0:
+            params.seconds = 0
+        rec = sp.record(address=sp.sender, paramHash=params.bytes)
+        self.data.permit_expires[rec] = params.seconds
 
 
 @sp.add_test(name="TZIP-17")
@@ -113,7 +119,7 @@ def test():
     scenario.h2("Testing SetEpiry")
 
     # expiry time for permit can be changed [set user default]
-    scenario += c1.setExpiry(seconds=0, bytes=sp.none).run(sender=alice)
+    scenario += c1.setUserExpiry(seconds=0).run(sender=alice)
 
     # permit is immediately expired as user default set to 0, should throw MISSIGNED err and not DUP_PERMIT
     scenario += c1.permit(key=alice.public_key, signature=sig, bytes=paramHash).run(
@@ -124,8 +130,8 @@ def test():
         sender=bob, chain_id=chainId, now=sp.timestamp("15665656"))
 
     # set specific param exp
-    scenario += c1.setExpiry(seconds=10000,
-                             bytes=sp.some(paramHash1)).run(sender=alice)
+    scenario += c1.setPermitExpiry(seconds=10000,
+                                   bytes=paramHash1).run(sender=alice)
 
     # permit is not expired even though user default is 0, should throw DUP_PERMIT not MISSIGNED err
     scenario += c1.permit(key=alice.public_key, signature=sig1, bytes=paramHash1).run(
